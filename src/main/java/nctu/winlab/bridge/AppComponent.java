@@ -56,14 +56,14 @@ import org.onosproject.net.flow.DefaultTrafficSelector;
 // import org.onosproject.net.flow.FlowRule;
 import org.onosproject.net.flow.FlowRuleService;
 import org.onosproject.net.flow.TrafficSelector;
-// import org.onosproject.net.flow.TrafficTreatment;
+import org.onosproject.net.flow.TrafficTreatment;
 // import org.onosproject.net.flow.criteria.Criterion;
 // import org.onosproject.net.flow.criteria.EthCriterion;
 // import org.onosproject.net.flow.instructions.Instruction;
 // import org.onosproject.net.flow.instructions.Instructions;
-// import org.onosproject.net.flowobjective.DefaultForwardingObjective;
+import org.onosproject.net.flowobjective.DefaultForwardingObjective;
 import org.onosproject.net.flowobjective.FlowObjectiveService;
-// import org.onosproject.net.flowobjective.ForwardingObjective;
+import org.onosproject.net.flowobjective.ForwardingObjective;
 import org.onosproject.net.host.HostService;
 import org.onosproject.net.packet.InboundPacket;
 // import org.onosproject.net.link.LinkEvent;
@@ -116,16 +116,16 @@ public class AppComponent implements SomeInterface {
     private ApplicationId appId;
     private MyPacketProcessor processor = new MyPacketProcessor();
     private Map<DeviceId, Map<MacAddress, PortNumber>> forwardTable = new HashMap<>();
-
+    private int flowPriority = 30; // Default value
+    private int flowTimeout = 30;  // Default value
 
     @Activate
     protected void activate() {
         cfgService.registerProperties(getClass());
         appId = coreService.registerApplication("nctu.winlab.bridge");
-
         packetService.addProcessor(processor, PacketProcessor.director(2));
-
         requestPacket();
+
         log.info("Started {}", appId.id());
     }
 
@@ -133,8 +133,8 @@ public class AppComponent implements SomeInterface {
     protected void deactivate() {
         cfgService.unregisterProperties(getClass(), false);
         packetService.removeProcessor(processor);
-
         cancelRequestPacket();
+
         log.info("Stopped");
     }
 
@@ -156,6 +156,7 @@ public class AppComponent implements SomeInterface {
     private void requestPacket() {
         // Request for IPv4 packets
         TrafficSelector.Builder selector = DefaultTrafficSelector.builder();
+
         selector.matchEthType(Ethernet.TYPE_IPV4);
         packetService.requestPackets(selector.build(), PacketPriority.LOWEST, appId);
     }
@@ -164,6 +165,7 @@ public class AppComponent implements SomeInterface {
     private void cancelRequestPacket() {
         // Cancel the request for IPv4 packets
         TrafficSelector.Builder selector = DefaultTrafficSelector.builder();
+
         selector.matchEthType(Ethernet.TYPE_IPV4);
         packetService.cancelPackets(selector.build(), PacketPriority.LOWEST, appId);
     }
@@ -179,13 +181,55 @@ public class AppComponent implements SomeInterface {
             forwardTable.put(switchID, switchTable);
 
             log.info("Add an entry to the port table of `{}`. MAC address: `{}` => Port: `{}`.",
-                switchID, macAddr, cp.port());
-            log.info("Table: {}", forwardTable);
+                    switchID, macAddr, cp.port());
+            // log.info("Table: {}", forwardTable);
         }
     }
 
+    /* Lookup the forwarding table */
     private PortNumber lookupTable(DeviceId switchID, MacAddress macAddr) {
         return forwardTable.get(switchID).get(macAddr);
+    }
+
+
+    /* Send out the packet from the specified port */
+    private void packetout(PacketContext context, PortNumber portNumber) {
+        context.treatmentBuilder().setOutput(portNumber);
+        context.send();
+    }
+
+    /* Broadcast the packet */
+    private void flood(PacketContext context) {
+        packetout(context, PortNumber.FLOOD);
+    }
+
+    /* Install Flow Rule */
+    private void installRule(PacketContext context, PortNumber dstPortNumber) {
+        InboundPacket packet = context.inPacket();
+        Ethernet ethPacket = packet.parsed();
+        TrafficSelector.Builder selectorBuilder = DefaultTrafficSelector.builder();
+        TrafficTreatment treatment = context.treatmentBuilder().setOutput(dstPortNumber).build();
+
+        // Match Src and Dst MAC Address
+        selectorBuilder.matchEthDst(ethPacket.getDestinationMAC());
+        selectorBuilder.matchEthSrc(ethPacket.getSourceMAC());
+
+        // Create Flow Rule
+        ForwardingObjective forwardingObjective = DefaultForwardingObjective.builder()
+                .withSelector(selectorBuilder.build())          // Build the selector
+                .withTreatment(treatment)                       // Setup the treatment
+                .withPriority(flowPriority)                     // Setup the priority of flow
+                .withFlag(ForwardingObjective.Flag.VERSATILE)   // ??
+                .fromApp(appId)                                 // Specify from which application
+                .makeTemporary(flowTimeout)                     // Set timeout
+                .add();                                         // Build the flow rule
+        // log.info("Flow Rule {}", forwardingObjective);
+
+        // Install the flow rule on the specified switch
+        flowObjectiveService.forward(packet.receivedFrom().deviceId(), forwardingObjective);
+
+        // After install the flow rule, use packet-out message to send packet
+        packetout(context, dstPortNumber);
     }
 
     /* Handle the packets coming from switchs */
@@ -218,16 +262,16 @@ public class AppComponent implements SomeInterface {
             DeviceId switchID = cp.deviceId();
 
             addTable(cp, srcMacAddr);
-            PortNumber port = lookupTable(switchID, dstMacAddr);
+            PortNumber dstPort = lookupTable(switchID, dstMacAddr);
 
-            if (port == null) {
+            if (dstPort == null) {
                 // Table Miss, Flood it
                 log.info("MAC address `{}` is missed on `{}`. Flood the packet.", dstMacAddr, switchID);
-                // TODO: Flood
+                flood(context);
             } else {
                 // Table Hit, Install rule
                 log.info("MAC address `{}` is matched on `{}`. Install a flow rule.", dstMacAddr, switchID);
-                // TODO: Install Rule
+                installRule(context, dstPort);
             }
         }
     }
