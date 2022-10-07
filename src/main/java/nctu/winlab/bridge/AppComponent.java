@@ -27,18 +27,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Dictionary;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 import static org.onlab.util.Tools.get;
 
 import org.onlab.packet.Ethernet;
-import org.onlab.packet.ICMP;
-import org.onlab.packet.IPv4;
+// import org.onlab.packet.ICMP;
+// import org.onlab.packet.IPv4;
+import org.onlab.packet.MacAddress;
 
 import org.onosproject.core.CoreService;
 import org.onosproject.core.ApplicationId;
-
-// import org.onosproject.net.ConnectPoint;
+import org.onosproject.net.DeviceId;
+// import org.onosproject.net.Port;
+import org.onosproject.net.PortNumber;
+import org.onosproject.net.ConnectPoint;
 // import org.onosproject.net.DeviceId;
 // import org.onosproject.net.Host;
 // import org.onosproject.net.HostId;
@@ -60,6 +65,7 @@ import org.onosproject.net.flow.TrafficSelector;
 import org.onosproject.net.flowobjective.FlowObjectiveService;
 // import org.onosproject.net.flowobjective.ForwardingObjective;
 import org.onosproject.net.host.HostService;
+import org.onosproject.net.packet.InboundPacket;
 // import org.onosproject.net.link.LinkEvent;
 // import org.onosproject.net.packet.InboundPacket;
 import org.onosproject.net.packet.PacketContext;
@@ -109,6 +115,7 @@ public class AppComponent implements SomeInterface {
     /* Variables */
     private ApplicationId appId;
     private MyPacketProcessor processor = new MyPacketProcessor();
+    private Map<DeviceId, Map<MacAddress, PortNumber>> forwardTable = new HashMap<>();
 
 
     @Activate
@@ -119,7 +126,6 @@ public class AppComponent implements SomeInterface {
         packetService.addProcessor(processor, PacketProcessor.director(2));
 
         requestPacket();
-        
         log.info("Started {}", appId.id());
     }
 
@@ -146,7 +152,7 @@ public class AppComponent implements SomeInterface {
         log.info("Invoked");
     }
 
-    /* Request packet */ 
+    /* Request packet */
     private void requestPacket() {
         // Request for IPv4 packets
         TrafficSelector.Builder selector = DefaultTrafficSelector.builder();
@@ -162,11 +168,67 @@ public class AppComponent implements SomeInterface {
         packetService.cancelPackets(selector.build(), PacketPriority.LOWEST, appId);
     }
 
-    /* Handle the packets coming from switchs */ 
+    /* Add entry to table */
+    private void addTable(ConnectPoint cp, MacAddress macAddr) {
+        DeviceId switchID = cp.deviceId();
+        Map<MacAddress, PortNumber> switchTable = forwardTable.getOrDefault(switchID, new HashMap<>());
+
+        if (switchTable.get(macAddr) == null) {
+            // Update Table
+            switchTable.put(macAddr, cp.port());
+            forwardTable.put(switchID, switchTable);
+
+            log.info("Add an entry to the port table of `{}`. MAC address: `{}` => Port: `{}`.",
+                switchID, macAddr, cp.port());
+            log.info("Table: {}", forwardTable);
+        }
+    }
+
+    private PortNumber lookupTable(DeviceId switchID, MacAddress macAddr) {
+        return forwardTable.get(switchID).get(macAddr);
+    }
+
+    /* Handle the packets coming from switchs */
     private class MyPacketProcessor implements PacketProcessor {
         @Override
         public void process(PacketContext context) {
-            log.info("MyPacketProcessor Handle Packet.");
+            // log.info("MyPacketProcessor Handle Packet.");
+
+            if (context.isHandled()) {
+                // log.info("Packet has been handled, skip it...");
+                return;
+            }
+
+            InboundPacket pkt = context.inPacket();
+            Ethernet ethPacket = pkt.parsed();
+
+            if (ethPacket == null) {
+                log.error("Packet type is not ethernet");
+                return;
+            }
+
+            if (ethPacket.getEtherType() == Ethernet.TYPE_LLDP || ethPacket.getEtherType() == Ethernet.TYPE_BSN) {
+                log.info("Ignore LLDP or BDDP packet");
+                return;
+            }
+
+            MacAddress srcMacAddr = ethPacket.getSourceMAC();
+            MacAddress dstMacAddr = ethPacket.getDestinationMAC();
+            ConnectPoint cp = pkt.receivedFrom();
+            DeviceId switchID = cp.deviceId();
+
+            addTable(cp, srcMacAddr);
+            PortNumber port = lookupTable(switchID, dstMacAddr);
+
+            if (port == null) {
+                // Table Miss, Flood it
+                log.info("MAC address `{}` is missed on `{}`. Flood the packet.", dstMacAddr, switchID);
+                // TODO: Flood
+            } else {
+                // Table Hit, Install rule
+                log.info("MAC address `{}` is matched on `{}`. Install a flow rule.", dstMacAddr, switchID);
+                // TODO: Install Rule
+            }
         }
     }
 
