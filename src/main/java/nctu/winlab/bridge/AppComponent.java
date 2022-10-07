@@ -65,7 +65,7 @@ import org.onosproject.net.packet.PacketService;
            })
 public class AppComponent implements SomeInterface {
 
-    private final Logger log = LoggerFactory.getLogger(getClass());
+    private final Logger log = LoggerFactory.getLogger("LearningBridge");
 
     /** Some configurable property. */
     private String someProperty;
@@ -192,7 +192,7 @@ public class AppComponent implements SomeInterface {
                 .withSelector(selectorBuilder.build())          // Build the selector
                 .withTreatment(treatment)                       // Setup the treatment
                 .withPriority(flowPriority)                     // Setup the priority of flow
-                .withFlag(ForwardingObjective.Flag.VERSATILE)   // ??
+                .withFlag(ForwardingObjective.Flag.VERSATILE)   // Matches two or more header fields.
                 .fromApp(appId)                                 // Specify from which application
                 .makeTemporary(flowTimeout)                     // Set timeout
                 .add();                                         // Build the flow rule
