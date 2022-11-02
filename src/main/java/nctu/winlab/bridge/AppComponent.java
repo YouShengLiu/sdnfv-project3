@@ -15,22 +15,16 @@
  */
 package nctu.winlab.bridge;
 
-import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
-import org.osgi.service.component.annotations.Modified;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Dictionary;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Properties;
-
-import static org.onlab.util.Tools.get;
 
 import org.onlab.packet.Ethernet;
 import org.onlab.packet.MacAddress;
@@ -58,17 +52,10 @@ import org.onosproject.net.packet.PacketService;
 /**
  * Skeletal ONOS application component.
  */
-@Component(immediate = true,
-           service = {SomeInterface.class},
-           property = {
-               "someProperty=Some Default String Value",
-           })
-public class AppComponent implements SomeInterface {
+@Component(immediate = true)
+public class AppComponent {
 
     private final Logger log = LoggerFactory.getLogger("LearningBridge");
-
-    /** Some configurable property. */
-    private String someProperty;
 
     @Reference(cardinality = ReferenceCardinality.MANDATORY)
     protected ComponentConfigService cfgService;
@@ -94,7 +81,6 @@ public class AppComponent implements SomeInterface {
 
     @Activate
     protected void activate() {
-        cfgService.registerProperties(getClass());
         appId = coreService.registerApplication("nctu.winlab.bridge");
         packetService.addProcessor(processor, PacketProcessor.director(2));
         requestPacket();
@@ -104,25 +90,10 @@ public class AppComponent implements SomeInterface {
 
     @Deactivate
     protected void deactivate() {
-        cfgService.unregisterProperties(getClass(), false);
         packetService.removeProcessor(processor);
         cancelRequestPacket();
 
         log.info("Stopped");
-    }
-
-    @Modified
-    public void modified(ComponentContext context) {
-        Dictionary<?, ?> properties = context != null ? context.getProperties() : new Properties();
-        if (context != null) {
-            someProperty = get(properties, "someProperty");
-        }
-        // log.info("Reconfigured");
-    }
-
-    @Override
-    public void someMethod() {
-        log.info("Invoked");
     }
 
     /* Request packet */
