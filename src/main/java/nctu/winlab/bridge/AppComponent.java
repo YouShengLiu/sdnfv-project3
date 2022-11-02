@@ -49,6 +49,10 @@ import org.onosproject.net.packet.PacketPriority;
 import org.onosproject.net.packet.PacketProcessor;
 import org.onosproject.net.packet.PacketService;
 
+import org.onosproject.net.flow.FlowRule;
+import org.onosproject.net.flow.DefaultFlowRule;
+import org.onosproject.net.flow.FlowRuleService;
+
 /**
  * Skeletal ONOS application component.
  */
@@ -71,6 +75,8 @@ public class AppComponent {
     /* For installing the flow rule */
     @Reference(cardinality = ReferenceCardinality.MANDATORY)
     protected FlowObjectiveService flowObjectiveService;
+    @Reference(cardinality = ReferenceCardinality.MANDATORY)
+    protected FlowRuleService flowRuleService;
 
     /* Variables */
     private ApplicationId appId;
@@ -176,6 +182,30 @@ public class AppComponent {
         packetout(context, dstPortNumber);
     }
 
+    private void installRule2(PacketContext context, PortNumber dstPortNumber) {
+        InboundPacket packet = context.inPacket();
+        Ethernet ethPacket = packet.parsed();
+        TrafficSelector.Builder selectorBuilder = DefaultTrafficSelector.builder();
+        TrafficTreatment treatment = context.treatmentBuilder().setOutput(dstPortNumber).build();
+
+        // Match Src and Dst MAC Address
+        selectorBuilder.matchEthDst(ethPacket.getDestinationMAC());
+        selectorBuilder.matchEthSrc(ethPacket.getSourceMAC());
+
+        FlowRule flowRule = DefaultFlowRule.builder()
+            .fromApp(appId)
+            .withSelector(selectorBuilder.build())
+            .withTreatment(treatment)
+            .makeTemporary(flowTimeout)
+            .withPriority(flowPriority)
+            .forDevice(packet.receivedFrom().deviceId())
+            .build();
+        
+        flowRuleService.applyFlowRules(flowRule);
+
+        packetout(context, dstPortNumber);
+    }
+
     /* Handle the packets coming from switchs */
     private class MyPacketProcessor implements PacketProcessor {
         @Override
@@ -215,7 +245,8 @@ public class AppComponent {
             } else {
                 // Table Hit, Install rule
                 log.info("MAC address `{}` is matched on `{}`. Install a flow rule.", dstMacAddr, switchID);
-                installRule(context, dstPort);
+                // installRule(context, dstPort);
+                installRule2(context, dstPort);
             }
         }
     }
